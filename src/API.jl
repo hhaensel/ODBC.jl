@@ -335,30 +335,68 @@ const SQL_DRIVER_COMPLETE_REQUIRED = UInt16(3)
 const SQL_DRIVER_NOPROMPT = UInt16(0)
 const SQL_DRIVER_PROMPT = UInt16(2)
 
-function SQLDriverConnect(dbc,connstr)
+function SQLDriverConnect(dbc, connstr::Union{AbstractString, Base.SecretBuffer})
     # need to call SQLDriverConnectW to ensure our application gets labelled "unicode"
     # and subsequent library calls behave properly
-    c = transcode(sqlwcharsize(), connstr)
-    # push!(c, sqlwcharsize()(0))
+
+    # Extract bytes and transcode to wide chars for unicode call
+    bytes = if connstr isa Base.SecretBuffer
+        # Read bytes from SecretBuffer, shred immediately
+        b = read(seekstart(connstr))
+        Base.shred!(connstr)
+        b
+    else
+        Vector{UInt8}(connstr)
+    end
+    wchars = transcode(sqlwcharsize(), bytes)
+
+    # Try unicode version first
     ret = @odbc(:SQLDriverConnectW,
         (Ptr{Cvoid},Ptr{Cvoid},Ptr{SQLWCHAR},SQLSMALLINT,Ptr{SQLCHAR},SQLSMALLINT,Ptr{SQLSMALLINT},SQLUSMALLINT),
-        getptr(dbc),C_NULL,c,length(c),C_NULL,0,C_NULL,SQL_DRIVER_NOPROMPT)
+        getptr(dbc),C_NULL,wchars,length(wchars),C_NULL,0,C_NULL,SQL_DRIVER_NOPROMPT)
+
     if ret == SQL_ERROR
         # @warn diagnostics(dbc)
+        # Fallback to non-unicode version using the original bytes
         ret = @odbc(:SQLDriverConnect,
             (Ptr{Cvoid},Ptr{Cvoid},Ptr{SQLCHAR},SQLSMALLINT,Ptr{SQLCHAR},SQLSMALLINT,Ptr{SQLSMALLINT},SQLUSMALLINT),
-            getptr(dbc),C_NULL,connstr,SQL_NTS,C_NULL,0,C_NULL,SQL_DRIVER_NOPROMPT)
+            getptr(dbc),C_NULL,bytes,length(bytes),C_NULL,0,C_NULL,SQL_DRIVER_NOPROMPT)
     end
+
+    # SECURITY: Zero all sensitive buffers
+    fill!(wchars, 0)  # Zero the transcoded wide-char buffer
+    fill!(bytes, 0)   # Zero the byte buffer
+
     return ret
 end
 
-function driverconnect(connstr)
+function driverconnect(connstr::Union{AbstractString, Base.SecretBuffer})
     dbc = Handle(SQL_HANDLE_DBC, ODBC_ENV[])
     @checksuccess dbc SQLDriverConnect(dbc, connstr)
     return dbc
 end
 
-connect(dsn, extraauth) = driverconnect("$dsn;$extraauth")
+function connect(dsn::AbstractString, extraauth::Union{AbstractString, Base.SecretBuffer})
+    # Build the full connection string in a SecretBuffer to keep credentials secure
+    # Note: DSN typically doesn't contain credentials (e.g., "DSN=mydb" or driver info)
+    # All credentials are in extraauth (UID/PWD), which is what we're protecting
+    connbuf = Base.SecretBuffer()
+
+    # Add DSN part (non-sensitive - may be displayed in Connection.show)
+    write(connbuf, dsn)
+    write(connbuf, ";")
+
+    # Add extraauth part (contains sensitive credentials)
+    if extraauth isa Base.SecretBuffer
+        write(connbuf, read(seekstart(extraauth)))
+        Base.shred!(extraauth)
+    else
+        write(connbuf, extraauth)
+    end
+
+    # Pass SecretBuffer through the chain - will be shredded in SQLDriverConnect
+    driverconnect(connbuf)
+end
 
 function SQLDisconnect(dbc::Ptr{Cvoid})
     @odbc(:SQLDisconnect,

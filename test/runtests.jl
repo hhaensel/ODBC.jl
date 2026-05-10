@@ -1,5 +1,89 @@
 using Test, ODBC, DBInterface, Tables, Dates, DecFP, MariaDB_Connector_ODBC_jll, MariaDB_Connector_C_jll
 
+# Test SecretBuffer support for secure credential handling
+@testset "SecretBuffer Support" begin
+    @testset "getextraauth with SecretBuffer" begin
+        # Test with SecretBuffer password
+        pwd = Base.SecretBuffer("secret_password")
+        usr = "testuser"
+
+        result = ODBC.getextraauth(usr, pwd, nothing)
+
+        @test result isa Base.SecretBuffer
+        @test result.size > 0
+
+        # Read the result to verify correctness
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={testuser}", result_str)
+        @test occursin("PWD={secret_password}", result_str)
+
+        # Clean up
+        Base.shred!(result)
+    end
+
+    @testset "getextraauth with all SecretBuffers" begin
+        pwd = Base.SecretBuffer("secret_pwd")
+        usr = Base.SecretBuffer("secret_usr")
+        extra = Base.SecretBuffer("token=abc123")
+
+        result = ODBC.getextraauth(usr, pwd, extra)
+
+        @test result isa Base.SecretBuffer
+
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={secret_usr}", result_str)
+        @test occursin("PWD={secret_pwd}", result_str)
+        @test occursin("token=abc123", result_str)
+
+        Base.shred!(result)
+    end
+
+    @testset "getextraauth with mixed types" begin
+        pwd = Base.SecretBuffer("secret")
+        usr = "normaluser"
+
+        result = ODBC.getextraauth(usr, pwd, nothing)
+        @test result isa Base.SecretBuffer
+
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={normaluser}", result_str)
+        @test occursin("PWD={secret}", result_str)
+
+        Base.shred!(result)
+    end
+
+    @testset "getextraauth backward compatibility" begin
+        # Test that regular strings still work
+        result = ODBC.getextraauth("user", "pass", nothing)
+
+        @test result isa Base.SecretBuffer
+
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={user}", result_str)
+        @test occursin("PWD={pass}", result_str)
+
+        Base.shred!(result)
+    end
+
+    @testset "API.connect with SecretBuffer" begin
+        # Test that connect function accepts SecretBuffer for extraauth
+        # DSN is a regular string (may be displayed), credentials are in extraauth
+        dsn = "DSN=test"
+        auth = Base.SecretBuffer("UID=user;PWD=pass")
+
+        # We can't actually test the full connection without a database,
+        # but we can verify the function signature accepts SecretBuffer for extraauth
+        @test hasmethod(ODBC.API.connect, (String, Base.SecretBuffer))
+        @test hasmethod(ODBC.API.connect, (String, String))
+
+        Base.shred!(auth)
+    end
+end
+
 tracefile = abspath(joinpath(@__DIR__, "odbc.log"))
 ODBC.setdebug(true, tracefile)
 @show ODBC.drivers()

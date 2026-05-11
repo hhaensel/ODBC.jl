@@ -34,6 +34,7 @@ function getextraauth(usr::Union{AbstractString, Base.SecretBuffer, Nothing},
         if usr isa Base.SecretBuffer
             seekstart(usr)
             write(buf, read(usr, usr.size))
+            Base.shred!(usr)
         else
             write(buf, usr)
         end
@@ -46,7 +47,8 @@ function getextraauth(usr::Union{AbstractString, Base.SecretBuffer, Nothing},
         write(buf, "PWD={")
         if pwd isa Base.SecretBuffer
             seekstart(pwd)
-            write(buf, read(pwd, pwd.size))
+            write(buf, read(pwd))
+            Base.shred!(pwd)
         else
             write(buf, pwd)
         end
@@ -59,6 +61,7 @@ function getextraauth(usr::Union{AbstractString, Base.SecretBuffer, Nothing},
         if extraauth isa Base.SecretBuffer
             seekstart(extraauth)
             write(buf, read(extraauth, extraauth.size))
+            Base.shred!(extraauth)
         else
             write(buf, extraauth)
         end

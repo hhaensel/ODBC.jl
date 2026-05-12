@@ -31,13 +31,9 @@ function getextraauth(usr::Union{AbstractString, Base.SecretBuffer, Nothing},
     # Add username if provided
     if usr !== nothing
         write(buf, "UID={")
-        if usr isa Base.SecretBuffer
-            seekstart(usr)
-            write(buf, read(usr, usr.size))
-            Base.shred!(usr)
-        else
-            write(buf, usr)
-        end
+        usr isa Base.SecretBuffer && seekstart(usr)
+        write(buf, usr)
+        usr isa Base.SecretBuffer && Base.shred!(usr)
         write(buf, "}")
     end
 
@@ -45,26 +41,18 @@ function getextraauth(usr::Union{AbstractString, Base.SecretBuffer, Nothing},
     if pwd !== nothing
         usr !== nothing && write(buf, ";")
         write(buf, "PWD={")
-        if pwd isa Base.SecretBuffer
-            seekstart(pwd)
-            write(buf, read(pwd))
-            Base.shred!(pwd)
-        else
-            write(buf, pwd)
-        end
+        pwd isa Base.SecretBuffer && seekstart(pwd)
+        write(buf, pwd)
+        pwd isa Base.SecretBuffer && Base.shred!(pwd)
         write(buf, "}")
     end
 
     # Add extra auth parameters if provided
     if extraauth !== nothing
         (usr !== nothing || pwd !== nothing) && write(buf, ";")
-        if extraauth isa Base.SecretBuffer
-            seekstart(extraauth)
-            write(buf, read(extraauth, extraauth.size))
-            Base.shred!(extraauth)
-        else
-            write(buf, extraauth)
-        end
+        extraauth isa Base.SecretBuffer && seekstart(extraauth)
+        write(buf, extraauth)
+        extraauth isa Base.SecretBuffer && Base.shred!(extraauth)
     end
 
     return buf  # Will be shredded by API.connect -> SQLDriverConnect

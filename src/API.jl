@@ -388,8 +388,11 @@ function connect(dsn::AbstractString, extraauth::Union{AbstractString, Base.Secr
 
     # Add extraauth part (contains sensitive credentials)
     if extraauth isa Base.SecretBuffer
-        write(connbuf, read(seekstart(extraauth)))
-        Base.shred!(extraauth)
+        try
+            write(connbuf, seekstart(extraauth))
+        finally
+            Base.shred!(extraauth)
+        end
     else
         write(connbuf, extraauth)
     end

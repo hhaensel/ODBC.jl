@@ -1,5 +1,38 @@
 using Test, ODBC, DBInterface, Tables, Dates, DecFP, MariaDB_Connector_ODBC_jll, MariaDB_Connector_C_jll
 
+tracefile = abspath(joinpath(@__DIR__, "odbc.log"))
+ODBC.setdebug(true, tracefile)
+@show ODBC.drivers()
+@show ODBC.dsns()
+ODBC.setdebug(false)
+@test filesize(tracefile) > 0
+rm(tracefile)
+
+PLUGIN_DIR = joinpath(MariaDB_Connector_C_jll.artifact_dir, "lib", "mariadb", "plugin")
+if Sys.islinux()
+    if Int == Int32
+        libpath = joinpath(expanduser("~"), "mariadb32/lib/libmaodbc.so")
+    else
+        libpath = joinpath("/home/runner/mariadb64", "mariadb-connector-odbc-3.2.8-ubuntu-jammy-amd64/lib/mariadb/libmaodbc.so")
+    end
+elseif Sys.iswindows()
+    if Int == Int32
+        libpath = expanduser(joinpath("~", "mariadb-connector-odbc-3.1.7-win32", "maodbc.dll"))
+    else
+        @show readdir(expanduser(joinpath("~", "mariadb-connector-odbc-3.1.7-win64", "SourceDir", "MariaDB", "MariaDB ODBC Driver 64-bit")))
+        libpath = expanduser(joinpath("~", "mariadb-connector-odbc-3.1.7-win64", "SourceDir", "MariaDB", "MariaDB ODBC Driver 64-bit", "maodbc.dll"))
+    end
+else
+    libpath = MariaDB_Connector_ODBC_jll.libmaodbc_path
+end
+@show libpath
+@show isfile(libpath)
+ODBC.adddriver("ODBC_Test_MariaDB", libpath)
+ODBC.adddsn("ODBC_Test_DSN_MariaDB", "ODBC_Test_MariaDB"; SERVER="127.0.0.1", UID="root", PLUGIN_DIR=PLUGIN_DIR, Option=67108864, CHARSET="utf8mb4")
+
+conn = DBInterface.connect(ODBC.Connection, "ODBC_Test_DSN_MariaDB")
+DBInterface.close!(conn)
+
 # Test SecretBuffer support for secure credential handling
 @testset "SecretBuffer Support" begin
     @testset "getextraauth with SecretBuffer" begin
@@ -95,38 +128,6 @@ using Test, ODBC, DBInterface, Tables, Dates, DecFP, MariaDB_Connector_ODBC_jll,
     end
 end
 
-tracefile = abspath(joinpath(@__DIR__, "odbc.log"))
-ODBC.setdebug(true, tracefile)
-@show ODBC.drivers()
-@show ODBC.dsns()
-ODBC.setdebug(false)
-@test filesize(tracefile) > 0
-rm(tracefile)
-
-PLUGIN_DIR = joinpath(MariaDB_Connector_C_jll.artifact_dir, "lib", "mariadb", "plugin")
-if Sys.islinux()
-    if Int == Int32
-        libpath = joinpath(expanduser("~"), "mariadb32/lib/libmaodbc.so")
-    else
-        libpath = joinpath("/home/runner/mariadb64", "mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64/lib/mariadb/libmaodbc.so")
-    end
-elseif Sys.iswindows()
-    if Int == Int32
-        libpath = expanduser(joinpath("~", "mariadb-connector-odbc-3.1.7-win32", "maodbc.dll"))
-    else
-        @show readdir(expanduser(joinpath("~", "mariadb-connector-odbc-3.1.7-win64", "SourceDir", "MariaDB", "MariaDB ODBC Driver 64-bit")))
-        libpath = expanduser(joinpath("~", "mariadb-connector-odbc-3.1.7-win64", "SourceDir", "MariaDB", "MariaDB ODBC Driver 64-bit", "maodbc.dll"))
-    end
-else
-    libpath = MariaDB_Connector_ODBC_jll.libmaodbc_path
-end
-@show libpath
-@show isfile(libpath)
-ODBC.adddriver("ODBC_Test_MariaDB", libpath)
-ODBC.adddsn("ODBC_Test_DSN_MariaDB", "ODBC_Test_MariaDB"; SERVER="127.0.0.1", UID="root", PLUGIN_DIR=PLUGIN_DIR, Option=67108864, CHARSET="utf8mb4")
-
-conn = DBInterface.connect(ODBC.Connection, "ODBC_Test_DSN_MariaDB")
-DBInterface.close!(conn)
 conn = DBInterface.connect(ODBC.Connection, "Driver={ODBC_Test_MariaDB};SERVER=127.0.0.1;PLUGIN_DIR=$PLUGIN_DIR;Option=67108864;CHARSET=utf8mb4;USER=root")
 
 DBInterface.execute(conn, "DROP DATABASE if exists mysqltest")

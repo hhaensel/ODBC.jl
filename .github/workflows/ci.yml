@@ -21,8 +21,41 @@ jobs:
           - x64
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          curl -O https://mariadb.org/mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz
+      # 1. Cache the downloaded archive to avoid scraping the website on every single commit
+      - name: Cache MariaDB ODBC Driver Archive
+        id: cache-odbc
+        uses: actions/cache@v4
+        with:
+          path: mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz
+          key: odbc-3.1.20-ubuntu-focal
+      # 2. Use your session-aware scraping logic only if the file is missing from cache
+      - name: Download MariaDB ODBC Driver
+        if: steps.cache-odbc.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -e
+          echo "Driver archive not in cache. Fetching from MariaDB DLM..."
+          
+          # Access download page and persistently save session cookies
+          HTML_PAGE=$(curl -sL --cookie-jar cookies.txt "https://mariadb.com")
+          
+          # Match the exact file name and isolate the dynamic URL
+          URL=$(echo "$HTML_PAGE" | grep -oP "href=\"\K[^\"]*mariadb-connector-odbc-3\.1\.20-ubuntu-focal-amd64\.tar\.gz")
+          
+          if [ -z "$URL" ]; then
+              echo "Error: Could not extract driver URL from the web page."
+              rm -f cookies.txt
+              exit 1
+          fi
+          
+          # Execute the download using the required session cookies
+          curl -fSL --cookie cookies.txt -o "mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz" "$URL"
+          
+          # Clean up temporary cookie storage
+          rm -f cookies.txt
+      # 3. Create target folder and extract the driver archive (runs always)
+      - name: Extract MariaDB ODBC Driver
+        run: |
           mkdir -p /home/runner/mariadb64
           tar xfz mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz -C /home/runner/mariadb64
       - uses: getong/mariadb-action@v1.1

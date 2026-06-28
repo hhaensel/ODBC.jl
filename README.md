@@ -56,7 +56,7 @@ conn = ODBC.Connection("DSN=mydb"; user="alice", password="secret123")
 ```
 
 **Why SecretBuffer?**
-- Credentials are automatically zeroed in memory after use
+- Minimizes the lifetime of credentials in memory
 - Reduces exposure to memory dumps, core dumps, and debugging tools
 - Required for security compliance (PCI-DSS, HIPAA, SOC2)
 - Protects against credential leakage in long-running processes

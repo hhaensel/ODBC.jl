@@ -13,7 +13,7 @@ if Sys.islinux()
     if Int == Int32
         libpath = joinpath(expanduser("~"), "mariadb32/lib/libmaodbc.so")
     else
-        libpath = joinpath("/home/runner/mariadb64", "mariadb-connector-odbc-3.2.8-ubuntu-jammy-amd64/lib/mariadb/libmaodbc.so")
+        libpath = joinpath("/home/runner/mariadb64", "mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64/lib/mariadb/libmaodbc.so")
     end
 elseif Sys.iswindows()
     if Int == Int32

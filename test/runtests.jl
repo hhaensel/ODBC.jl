@@ -17,6 +17,9 @@ using Test, ODBC, DBInterface, Tables, Dates, DecFP, MariaDB_Connector_ODBC_jll,
         result_str = String(read(result, result.size))
         @test occursin("UID={testuser}", result_str)
         @test occursin("PWD={secret_password}", result_str)
+        
+        # test that pwd has been shredded
+        @test isempty(pwd)
 
         # Clean up
         Base.shred!(result)
@@ -36,6 +39,11 @@ using Test, ODBC, DBInterface, Tables, Dates, DecFP, MariaDB_Connector_ODBC_jll,
         @test occursin("UID={secret_usr}", result_str)
         @test occursin("PWD={secret_pwd}", result_str)
         @test occursin("token=abc123", result_str)
+
+        # test that pwd, usr, and extra have been shredded
+        @test isempty(pwd)
+        @test isempty(usr)
+        @test isempty(extra)
 
         Base.shred!(result)
     end
@@ -70,17 +78,20 @@ using Test, ODBC, DBInterface, Tables, Dates, DecFP, MariaDB_Connector_ODBC_jll,
     end
 
     @testset "API.connect with SecretBuffer" begin
-        # Test that connect function accepts SecretBuffer for extraauth
-        # DSN is a regular string (may be displayed), credentials are in extraauth
-        dsn = "DSN=test"
-        auth = Base.SecretBuffer("UID=user;PWD=pass")
+        usr = Base.SecretBuffer("root")
+        pword = Base.SecretBuffer("")
+        extraauth = Base.SecretBuffer("Option=67108864;CHARSET=utf8mb4")
+        auth = ODBC.getextraauth(usr, pword, extraauth)
+        conn = DBInterface.connect(ODBC.Connection, "Driver={ODBC_Test_MariaDB}", extraauth = auth)
+        
+        @test conn isa ODBC.Connection
+        DBInterface.close!(conn)
 
-        # We can't actually test the full connection without a database,
-        # but we can verify the function signature accepts SecretBuffer for extraauth
-        @test hasmethod(ODBC.API.connect, (String, Base.SecretBuffer))
-        @test hasmethod(ODBC.API.connect, (String, String))
-
-        Base.shred!(auth)
+        # test that the SecretBuffers have been shredded
+        @test isempty(usr)
+        @test isempty(pword)
+        @test isempty(extraauth)
+        @test isempty(auth)
     end
 end
 

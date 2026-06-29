@@ -302,7 +302,11 @@ function Cursor(stmt; iterate_rows::Bool=false, ignore_driver_row_count::Bool=fa
                 longtexts[i] = true
                 columnsizes[i] = 255
             end
-            columnsizes[i] += 1
+            if sqltype == API.SQL_DECIMAL || sqltype == API.SQL_NUMERIC
+                columnsizes[i] += 3 # 3 bytes for \0 + sign + decimal point
+            else
+                columnsizes[i] += 1 # 1 byte for \0
+            end
         end
     end
     metadata = [Any["column name", names...] Any["column type", types...] Any["sql type", map(x->API.SQL_TYPES[x], sqltypes)...] Any["c type", map(x->API.C_TYPES[x], ctypes)...] Any["sizes", map(Int, columnsizes)...] Any["nullable", map(x->x != API.SQL_NO_NULLS, nullables)...] Any["long data", longtexts...]]

@@ -340,21 +340,7 @@ function Cursor(stmt; iterate_rows::Bool=false, ignore_driver_row_count::Bool=fa
                 elsize = columnsizes[i]
                 for j = 1:rowsfetched
                     @inbounds ind = inds[j]
-                    if ind == API.SQL_NULL_DATA
-                        A[j] = missing
-                    else
-                        raw_bytes = unsafe_wrap(Array, pointer(data, cur), ind)
-                        count = length(raw_bytes)
-                        # strip trailing null bytes if it's a character/string data type
-                        # (Drivers often pad with \0, but Julia strings shouldn't embed them)
-                        if ctype == API.SQL_C_CHAR || ctype == API.SQL_C_WCHAR
-                            while count > 0 && raw_bytes[count] == 0x00
-                                count -= 1
-                            end
-                        end
-
-                        A[j] = jlcast(Base.nonmissingtype(T), view(raw_bytes, 1:count))
-                    end
+                    A[j] = ind == API.SQL_NULL_DATA ? missing : jlcast(Base.nonmissingtype(T), unsafe_wrap(Array, pointer(data, cur), ind))
                     cur += elsize
                 end
                 columns[i] = A

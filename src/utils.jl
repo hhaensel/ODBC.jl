@@ -337,11 +337,17 @@ bindcol(stmt, i, b::Binding) = API.SQLBindCol(API.getptr(stmt), i,
     b.valuetype, pointer(b.value), b.bufferlength, b.strlen_or_indptr)
 
 function jlcast(::Type{T}, bytes) where {T <: DecFP.DecimalFloatingPoint}
-    x = rstrip(String(bytes), '\0')
+    x = rstrip(String(copy(bytes)), '\0')
     parse(T, x)
 end
 jlcast(::Type{Vector{UInt8}}, bytes) = copy(bytes)
-jlcast(::Type{String}, bytes) = String(bytes)
+function jlcast(::Type{String}, bytes)
+    count = length(bytes)
+    while count > 0 && bytes[count] == 0x00
+        count -= 1
+    end
+    String(view(bytes, 1:count))
+end
 
 # given the SQL type as described by the driver library
 # what is the C storage needed for data transfer, and

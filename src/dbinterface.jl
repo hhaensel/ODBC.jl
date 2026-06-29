@@ -22,14 +22,40 @@ function clear!(conn::Connection)
 end
 
 # format usr, pwd, and extraauth into UID=user;PWD=pass;extraauth
-function getextraauth(usr::Union{AbstractString, Nothing}, pwd::Union{AbstractString, Nothing}, extraauth::Union{AbstractString, Nothing}) :: String
-    parts = [
-        usr === nothing ? nothing : "UID={$usr}",
-        pwd === nothing ? nothing : "PWD={$pwd}",
-        extraauth === nothing ? nothing : extraauth
-    ]
-    strings = filter(s -> s !== nothing, parts)
-    return join(strings, ";")
+# SECURITY: Returns SecretBuffer to keep credentials secure throughout the call chain
+function getextraauth(usr::Union{AbstractString, Base.SecretBuffer, Nothing},
+                      pwd::Union{AbstractString, Base.SecretBuffer, Nothing},
+                      extraauth::Union{AbstractString, Base.SecretBuffer, Nothing}) :: Base.SecretBuffer
+    buf = Base.SecretBuffer()
+
+    # Add username if provided
+    if usr !== nothing
+        write(buf, "UID={")
+        usr isa Base.SecretBuffer && seekstart(usr)
+        write(buf, usr)
+        usr isa Base.SecretBuffer && Base.shred!(usr)
+        write(buf, "}")
+    end
+
+    # Add password if provided
+    if pwd !== nothing
+        usr !== nothing && write(buf, ";")
+        write(buf, "PWD={")
+        pwd isa Base.SecretBuffer && seekstart(pwd)
+        write(buf, pwd)
+        pwd isa Base.SecretBuffer && Base.shred!(pwd)
+        write(buf, "}")
+    end
+
+    # Add extra auth parameters if provided
+    if extraauth !== nothing
+        (usr !== nothing || pwd !== nothing) && write(buf, ";")
+        extraauth isa Base.SecretBuffer && seekstart(extraauth)
+        write(buf, extraauth)
+        extraauth isa Base.SecretBuffer && Base.shred!(extraauth)
+    end
+
+    return buf  # Will be shredded by API.connect -> SQLDriverConnect
 end
 
 """
@@ -38,9 +64,22 @@ end
 Construct a `Connection` type by connecting to a valid ODBC Connection or by specifying a datasource name or valid connection string.
 1st argument `dsn` can be either the name of a pre-defined ODBC Connection or a valid connection string.
 A great resource for building valid connection strings is [http://www.connectionstrings.com/](http://www.connectionstrings.com/).
-Takes optional keyword arguments `username`, `password`, and `extraauth`, which are used to specify auth parameters. `extraauth` is
-to allow you to pass a sensitive string to be appended verbatim to the end of the connection string, e.g. DB-specific auth token
-parameters.
+
+Takes optional keyword arguments `user`, `password`, and `extraauth`, which are used to specify auth parameters.
+For enhanced security, credentials (`user`, `password`, `extraauth`) can be provided as `Base.SecretBuffer` objects,
+which will be securely shredded (zeroed in memory) after use to minimize exposure of sensitive data in memory dumps
+or swap files.
+
+Note: The `dsn` parameter should not contain credentials as it is stored in the Connection object and displayed
+by the `show` method. Use the keyword arguments for credentials instead.
+
+# Security Best Practice
+For sensitive credentials, use `Base.SecretBuffer`:
+```julia
+pwd = Base.SecretBuffer("my_secret_password")
+conn = ODBC.Connection("DSN=mydb"; user="myuser", password=pwd)
+# pwd is automatically shredded after connection establishment
+```
 
 Note that connecting will use the currently "set" ODBC driver manager, which by default is iODBC on OSX, unixODBC on Linux, and
 the system driver manager on Windows. If you experience cryptic connection errors, it's probably worth checking with your ODBC
@@ -53,8 +92,9 @@ conn = ODBC.Connection(...)
 """
 function Connection(dsn::AbstractString; user=nothing, password=nothing, extraauth=nothing)
     connstr = occursin('=', dsn) ? dsn : "DSN=$dsn"
-    extraauth = getextraauth(user, password, extraauth)
-    internalconnection = API.connect(connstr, extraauth)
+    extraauth_buf = getextraauth(user, password, extraauth)
+    # extraauth_buf (SecretBuffer) will be shredded in API.connect -> SQLDriverConnect
+    internalconnection = API.connect(connstr, extraauth_buf)
     return Connection(internalconnection, dsn)
 end
 
@@ -68,9 +108,22 @@ Connection(dsn::AbstractString, usr, pwd) = Connection(dsn; user=usr, password=p
 Construct a `Connection` type by connecting to a valid ODBC Connection or by specifying a datasource name or valid connection string.
 1st argument `dsn` can be either the name of a pre-defined ODBC Connection or a valid connection string.
 A great resource for building valid connection strings is [http://www.connectionstrings.com/](http://www.connectionstrings.com/).
-Takes optional keyword arguments `username`, `password`, and `extraauth`, which are used to specify auth parameters. `extraauth` is
-to allow you to pass a sensitive string to be appended verbatim to the end of the connection string, e.g. DB-specific auth token
-parameters.
+
+Takes optional keyword arguments `user`, `password`, and `extraauth`, which are used to specify auth parameters.
+For enhanced security, credentials (`user`, `password`, `extraauth`) can be provided as `Base.SecretBuffer` objects,
+which will be securely shredded (zeroed in memory) after use to minimize exposure of sensitive data in memory dumps
+or swap files.
+
+Note: The `dsn` parameter should not contain credentials as it is stored in the Connection object and displayed
+by the `show` method. Use the keyword arguments for credentials instead.
+
+# Security Best Practice
+For sensitive credentials, use `Base.SecretBuffer`:
+```julia
+pwd = Base.SecretBuffer("my_secret_password")
+conn = DBInterface.connect(ODBC.Connection, "DSN=mydb"; user="myuser", password=pwd)
+# pwd is automatically shredded after connection establishment
+```
 
 Note that connecting will use the currently "set" ODBC driver manager, which by default is iODBC on OSX, unixODBC on Linux, and
 the system driver manager on Windows. If you experience cryptic connection errors, it's probably worth checking with your ODBC
@@ -249,7 +302,11 @@ function Cursor(stmt; iterate_rows::Bool=false, ignore_driver_row_count::Bool=fa
                 longtexts[i] = true
                 columnsizes[i] = 255
             end
-            columnsizes[i] += 1
+            if sqltype == API.SQL_DECIMAL || sqltype == API.SQL_NUMERIC
+                columnsizes[i] += 3 # 3 bytes for \0 + sign + decimal point
+            else
+                columnsizes[i] += 1 # 1 byte for \0
+            end
         end
     end
     metadata = [Any["column name", names...] Any["column type", types...] Any["sql type", map(x->API.SQL_TYPES[x], sqltypes)...] Any["c type", map(x->API.C_TYPES[x], ctypes)...] Any["sizes", map(Int, columnsizes)...] Any["nullable", map(x->x != API.SQL_NO_NULLS, nullables)...] Any["long data", longtexts...]]

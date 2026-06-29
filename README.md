@@ -16,6 +16,51 @@ The package is registered in the `General` registry and so can be installed with
 julia> using Pkg; Pkg.add("ODBC")
 ```
 
+## Quick Start
+
+```julia
+using ODBC, DataFrames
+
+# For production: Use getpass() to securely prompt for credentials
+pwd = Base.getpass("Enter password")
+conn = ODBC.Connection("DSN=mydb"; user="admin", password=pwd)
+# Credentials are automatically shredded from memory after connection
+
+# Execute queries
+result = DBInterface.execute(conn, "SELECT * FROM users") |> DataFrame
+```
+
+## Security: Use SecretBuffer for Credentials
+
+**Important for production systems**: Regular Julia `String` objects cannot be securely erased from memory. For sensitive credentials, use `Base.SecretBuffer`:
+
+```julia
+# RECOMMENDED: Use getpass() for interactive password input (won't echo to screen)
+pwd = Base.getpass("Enter password")
+conn = ODBC.Connection("DSN=mydb"; user="alice", password=pwd)
+
+# For non-interactive contexts (environment variables)
+pwd = Base.SecretBuffer(ENV["DB_PASSWORD"])
+conn = ODBC.Connection("DSN=mydb"; user="alice", password=pwd)
+
+# For Docker secrets or file-based credentials
+pwd = open("/run/secrets/db_password") do io
+    sb = Base.SecretBuffer()
+    write(sb, io)
+    seekstart(sb)
+end
+conn = ODBC.Connection("DSN=mydb"; user="alice", password=pwd)
+
+# AVOID: Plain strings (stay in memory until garbage collected)
+conn = ODBC.Connection("DSN=mydb"; user="alice", password="secret123")
+```
+
+**Why SecretBuffer?**
+- Minimizes the lifetime of credentials in memory
+- Reduces exposure to memory dumps, core dumps, and debugging tools
+- Required for security compliance (PCI-DSS, HIPAA, SOC2)
+- Protects against credential leakage in long-running processes
+
 ## Documentation
 
 - [**STABLE**][docs-stable-url] &mdash; **most recently tagged version of the documentation.**

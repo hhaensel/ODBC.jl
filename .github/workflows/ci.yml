@@ -19,12 +19,49 @@ jobs:
           - ubuntu-latest
         arch:
           - x64
+    env:
+      MARIADB_CONNECTOR_VERSION: "3.1.20"
+      MARIADB_CONNECTOR_FILE: "mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz"
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          curl -O https://downloads.mariadb.com/Connectors/odbc/connector-odbc-3.1.20/mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz
+      # 1. Cache the downloaded archive using the proper naming convention
+      - name: Cache MariaDB Connector Archive
+        id: cache-mariadb-connector
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.MARIADB_CONNECTOR_FILE }}
+          key: mariadb-connector-${{ env.MARIADB_CONNECTOR_VERSION }}-ubuntu-focal
+      # 2. Download step with dynamic URL and filename handling
+      - name: Download MariaDB Connector
+        if: steps.cache-mariadb-connector.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -e
+          BASE_URL="https://dlm.mariadb.com/browse/odbc_connector/${{ env.MARIADB_CONNECTOR_VERSION }}/"
+          echo "Fetching from web page: $BASE_URL"
+          
+          # Access download page and persistently save session cookies
+          HTML_PAGE=$(curl -sL --cookie-jar cookies.txt "$BASE_URL")
+          
+          # Match the exact file name using the correct variable name
+          URL=$(echo "$HTML_PAGE" | grep -oP "href=\"\K[^\"]*${{ env.MARIADB_CONNECTOR_FILE }}")
+          
+          if [ -z "$URL" ]; then
+              echo "Error: Could not extract download URL for ${{ env.MARIADB_CONNECTOR_FILE }} from $BASE_URL"
+              rm -f cookies.txt
+              exit 1
+          fi
+          
+          # Execute the download using the cookies and target file environment variable
+          curl -fSL --cookie cookies.txt -o "${{ env.MARIADB_CONNECTOR_FILE }}" "$URL"
+          
+          # Clean up temporary cookie storage
+          rm -f cookies.txt
+      # 3. Create target folder and extract the connector archive (runs always)
+      - name: Extract MariaDB Connector
+        run: |
           mkdir -p /home/runner/mariadb64
-          tar xfz mariadb-connector-odbc-3.1.20-ubuntu-focal-amd64.tar.gz -C /home/runner/mariadb64
+          tar xfz ${{ env.MARIADB_CONNECTOR_FILE }} -C /home/runner/mariadb64
       - uses: getong/mariadb-action@v1.1
         with:
           host port: 3306 # Optional, default value is 3306. The port of host

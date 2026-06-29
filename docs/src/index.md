@@ -32,6 +32,46 @@ Once a driver or two are installed (viewable by calling `ODBC.drivers()`), you c
 
 In setting up a DSN, you can specify all the configuration options once, then connect by just calling `ODBC.Connection("dsn name")` or `DBInterface.execute(ODBC.Connection, "dsn name")`, optionally passing a username and password as the 2nd and 3rd arguments. Alternatively, crafting and connecting via a fully specified connection string can mean less config-file dependency.
 
+#### Secure Credential Handling
+
+**Security Best Practice**: For production systems handling sensitive data, use `Base.SecretBuffer` instead of plain strings for credentials:
+
+```julia
+# RECOMMENDED: Use getpass() for interactive password (won't echo to screen)
+pwd = Base.getpass("Enter password")
+conn = ODBC.Connection("DSN=mydb"; user="admin", password=pwd)
+# pwd is automatically zeroed - no manual cleanup needed!
+
+# AVOID: Plain strings remain in memory until garbage collected
+conn = ODBC.Connection("DSN=mydb"; user="admin", password="plaintext")
+```
+
+**Why SecretBuffer?**
+- Regular `String` objects are immutable and cannot be zeroed
+- Credentials in strings persist in memory, exposing them to memory dumps and debugging tools
+- `SecretBuffer` automatically shreds (zeros) memory after use
+- Essential for compliance with security standards (PCI-DSS, HIPAA, SOC2)
+
+**Common patterns:**
+
+```julia
+# Interactive password prompt (recommended - doesn't echo password)
+pwd = Base.getpass("Enter database password")
+conn = ODBC.Connection("DSN=mydb"; user="admin", password=pwd)
+
+# From environment variables (for non-interactive contexts)
+pwd = Base.SecretBuffer(ENV["DB_PASSWORD"])
+conn = ODBC.Connection("DSN=mydb"; user="admin", password=pwd)
+
+# All credentials secure
+usr = Base.SecretBuffer("admin")
+pwd = Base.getpass("Enter password")
+token = Base.SecretBuffer("AuthToken=xyz123")
+conn = ODBC.Connection("DSN=mydb"; user=usr, password=pwd, extraauth=token)
+```
+
+**Important**: Never put credentials directly in the DSN string (e.g., `"DSN=mydb;UID=user;PWD=pass"`) as the DSN is stored and displayed by the `Connection` object. Always use keyword arguments (`user=`, `password=`, `extraauth=`) for credentials.
+
 Note that connecting will use the currently "set" ODBC driver manager, which by default is iODBC on OSX, unixODBC on Linux, and
 the system driver manager on Windows. If you experience cryptic connection errors, it's probably worth checking with your ODBC
 driver documentation to see if it requires a specific driver manager. For example, Microsoft-provided ODBC driver for SQL Server
@@ -125,7 +165,6 @@ using DataFrames
 
 host = "trino-adhoc.my-company.net"
 port = "443"
-TRINO_CREDS = Dict("user" => ENV["TRINO_USER"], "password"=> ENV["TRINO_PASSWORD"])
 drivername = "trino"
 driverpath = "/Library/starburst/starburstodbc/lib/libstarburstodbc_sb64-universal.dylib"
 connection_string = "Driver=$(drivername);Host=$(host);Port=$(port);AuthenticationType=LDAP Authentication"
@@ -139,7 +178,10 @@ ODBC.drivers()
     # Dict{String, String} with 1 entry:
     # "trino" => "Installed"
 
-conn = ODBC.Connection(connection_string, TRINO_CREDS["user"], TRINO_CREDS["password"])
+# Use SecretBuffer for secure credential handling (recommended for production)
+usr = Base.SecretBuffer(ENV["TRINO_USER"])
+pwd = Base.SecretBuffer(ENV["TRINO_PASSWORD"])
+conn = ODBC.Connection(connection_string; user=usr, password=pwd)
 
 df = DBInterface.execute(conn, "show catalogs;") |> DataFrame;
 df = DBInterface.execute(conn, "select current_date as today;") |> DataFrame

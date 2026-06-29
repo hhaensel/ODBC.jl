@@ -32,6 +32,102 @@ ODBC.adddsn("ODBC_Test_DSN_MariaDB", "ODBC_Test_MariaDB"; SERVER="127.0.0.1", UI
 
 conn = DBInterface.connect(ODBC.Connection, "ODBC_Test_DSN_MariaDB")
 DBInterface.close!(conn)
+
+# Test SecretBuffer support for secure credential handling
+@testset "SecretBuffer Support" begin
+    @testset "getextraauth with SecretBuffer" begin
+        # Test with SecretBuffer password
+        pwd = Base.SecretBuffer("secret_password")
+        usr = "testuser"
+
+        result = ODBC.getextraauth(usr, pwd, nothing)
+
+        @test result isa Base.SecretBuffer
+        @test result.size > 0
+
+        # Read the result to verify correctness
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={testuser}", result_str)
+        @test occursin("PWD={secret_password}", result_str)
+        
+        # test that pwd has been shredded
+        @test isempty(pwd)
+
+        # Clean up
+        Base.shred!(result)
+    end
+
+    @testset "getextraauth with all SecretBuffers" begin
+        pwd = Base.SecretBuffer("secret_pwd")
+        usr = Base.SecretBuffer("secret_usr")
+        extra = Base.SecretBuffer("token=abc123")
+
+        result = ODBC.getextraauth(usr, pwd, extra)
+
+        @test result isa Base.SecretBuffer
+
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={secret_usr}", result_str)
+        @test occursin("PWD={secret_pwd}", result_str)
+        @test occursin("token=abc123", result_str)
+
+        # test that pwd, usr, and extra have been shredded
+        @test isempty(pwd)
+        @test isempty(usr)
+        @test isempty(extra)
+
+        Base.shred!(result)
+    end
+
+    @testset "getextraauth with mixed types" begin
+        pwd = Base.SecretBuffer("secret")
+        usr = "normaluser"
+
+        result = ODBC.getextraauth(usr, pwd, nothing)
+        @test result isa Base.SecretBuffer
+
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={normaluser}", result_str)
+        @test occursin("PWD={secret}", result_str)
+
+        Base.shred!(result)
+    end
+
+    @testset "getextraauth backward compatibility" begin
+        # Test that regular strings still work
+        result = ODBC.getextraauth("user", "pass", nothing)
+
+        @test result isa Base.SecretBuffer
+
+        seekstart(result)
+        result_str = String(read(result, result.size))
+        @test occursin("UID={user}", result_str)
+        @test occursin("PWD={pass}", result_str)
+
+        Base.shred!(result)
+    end
+
+    @testset "API.connect with SecretBuffer" begin
+        usr = Base.SecretBuffer("root")
+        pword = Base.SecretBuffer("")
+        extraauth = Base.SecretBuffer("Option=67108864;CHARSET=utf8mb4")
+        auth = ODBC.getextraauth(usr, pword, extraauth)
+        conn = DBInterface.connect(ODBC.Connection, "Driver={ODBC_Test_MariaDB}", extraauth = auth)
+        
+        @test conn isa ODBC.Connection
+        DBInterface.close!(conn)
+
+        # test that the SecretBuffers have been shredded
+        @test isempty(usr)
+        @test isempty(pword)
+        @test isempty(extraauth)
+        @test isempty(auth)
+    end
+end
+
 conn = DBInterface.connect(ODBC.Connection, "Driver={ODBC_Test_MariaDB};SERVER=127.0.0.1;PLUGIN_DIR=$PLUGIN_DIR;Option=67108864;CHARSET=utf8mb4;USER=root")
 
 DBInterface.execute(conn, "DROP DATABASE if exists mysqltest")

@@ -40,7 +40,9 @@ checkdupnames(names) = length(unique(map(x->lowercase(String(x)), names))) == le
 function createtable(conn::Connection, nm::AbstractString, sch::Tables.Schema; debug::Bool=false, quoteidentifiers::Bool=true, createtableclause::AbstractString="CREATE TABLE", columnsuffix=Dict())
     names = sch.names
     checkdupnames(names)
-    types = [sqltype(conn, T) for T in sch.types]
+    # prevent row too large error by limiting column size for long text types
+    # as some drivers (like mariadb-connectors-odbc 3.2.8) will return 65535
+    types = [replace(sqltype(conn, T), "65535" => "255") for T in sch.types]
     columns = (string(quoteidentifiers ? quoteid(conn, String(names[i])) : names[i], ' ', types[i], ' ', get(columnsuffix, names[i], "")) for i = 1:length(names))
     debug && @info "executing create table statement: `$createtableclause $nm ($(join(columns, ", ")))`"
     return DBInterface.execute(conn, "$createtableclause $nm ($(join(columns, ", ")))")

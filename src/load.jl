@@ -20,14 +20,25 @@ function sqltype(conn, T)
         if i === nothing
             defaultT = "VARCHAR(255)"
         else
-            defaultT = types.TYPE_NAME[i] * "($(types.COLUMN_SIZE[i]))"
+            # Safeguard: Any driver returning exactly the maximum tiny/medium text range 
+            # for default VARCHAR triggers a standard 255 fallback, e.g. mariadb version 3.2
+            colsize = types.COLUMN_SIZE[i]
+            (colsize == 65535 || colsize == 16777215) && (colsize = 255)
+            defaultT = types.TYPE_NAME[i] * "($colsize)"
         end
         for jlT in BINDTYPES
             _, sqlT = bindtypes(jlT)
             i = findfirst(==(sqlT), types.DATA_TYPE)
             nm = i !== nothing ? types.TYPE_NAME[i] : defaultT
             if i !== nothing && types.CREATE_PARAMS[i] !== missing && nm != "DOUBLE" && nm != "FLOAT"
-                nm *= occursin(',', types.CREATE_PARAMS[i]) ? "($(typeprecision(jlT)),$(typescale(jlT)))" : "($(types.COLUMN_SIZE[i]))"
+                colsize = types.COLUMN_SIZE[i]
+                # Step down the explicit type bindings if they hit MariaDB max sizes
+                if (sqlT in (API.SQL_VARCHAR, API.SQL_VARBINARY, API.SQL_WVARCHAR)) && 
+                   (colsize == 65535 || colsize == 16777215)
+                    colsize = 255
+                end
+                
+                nm *= occursin(',', types.CREATE_PARAMS[i]) ? "($(typeprecision(jlT)),$(typescale(jlT)))" : "($colsize)"
             end
             conn.types[jlT] = nm
         end
@@ -42,7 +53,7 @@ function createtable(conn::Connection, nm::AbstractString, sch::Tables.Schema; d
     checkdupnames(names)
     # prevent row too large error by limiting column size for long text types
     # as some drivers (like mariadb-connectors-odbc 3.2.8) will return 65535
-    types = [replace(sqltype(conn, T), "65535" => "255") for T in sch.types]
+    types = [sqltype(conn, T) for T in sch.types]
     columns = (string(quoteidentifiers ? quoteid(conn, String(names[i])) : names[i], ' ', types[i], ' ', get(columnsuffix, names[i], "")) for i = 1:length(names))
     debug && @info "executing create table statement: `$createtableclause $nm ($(join(columns, ", ")))`"
     return DBInterface.execute(conn, "$createtableclause $nm ($(join(columns, ", ")))")
